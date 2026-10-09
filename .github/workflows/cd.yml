@@ -1,0 +1,61 @@
+name: CD
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el proyecto
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Subir la version en el README
+        env:
+          DESTINO: ${{ github.head_ref || github.ref_name }}
+        run: |
+          touch README.md
+          ULTIMA=$(grep -oE '^AppVersion-[0-9]+' README.md | sed 's/AppVersion-//' | sort -n | tail -n 1)
+          if [ -z "$ULTIMA" ]; then
+            NUEVA=0
+          else
+            NUEVA=$((ULTIMA + 1))
+          fi
+          FECHA=$(TZ=Europe/Madrid date '+%d/%m/%Y %H:%M')
+          LINEA="AppVersion-$NUEVA - $FECHA"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "Pull request abierto: al mergear en main se escribira $LINEA"
+            exit 0
+          fi
+          if [ -s README.md ] && [ -n "$(tail -c 1 README.md)" ]; then echo >> README.md; fi
+          printf '\n%s\n' "$LINEA" >> README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "Despliegue: $LINEA"
+          git push origin "HEAD:$DESTINO"
+
+  validate-prod:
+    needs: update-readme
+    runs-on: self-hosted
+    steps:
+      - name: Comparar PROD_TOKEN con LOCAL_PROD_TOKEN
+        shell: powershell
+        env:
+          PROD_TOKEN: ${{ secrets.PROD_TOKEN }}
+        run: |
+          if ($env:PROD_TOKEN -eq $env:LOCAL_PROD_TOKEN) {
+            Write-Host "Todo correcto para desplegar"
+          } else {
+            Write-Host "Validacion fallida: PROD_TOKEN no coincide con LOCAL_PROD_TOKEN"
+            exit 1
+          }
