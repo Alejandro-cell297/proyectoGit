@@ -1,0 +1,64 @@
+name: CI
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el proyecto
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Añadir la feature al README
+        env:
+          RAMA_PR: ${{ github.head_ref }}
+          MENSAJE: ${{ github.event.head_commit.message }}
+          DESTINO: ${{ github.head_ref || github.ref_name }}
+        run: |
+          RAMA="$RAMA_PR"
+          if [ -z "$RAMA" ]; then
+            RAMA=$(printf '%s\n' "$MENSAJE" | head -n 1 | sed -n 's|^Merge pull request #[0-9]* from [^/]*/||p')
+          fi
+          if [ -z "$RAMA" ]; then
+            echo "No viene de una feature, no hay nada que añadir al README"
+            exit 0
+          fi
+          LINEA="Añadida feature: $RAMA"
+          touch README.md
+          if grep -qxF "$LINEA" README.md; then
+            echo "El README ya tiene la línea: $LINEA"
+            exit 0
+          fi
+          if [ -s README.md ] && [ -n "$(tail -c 1 README.md)" ]; then echo >> README.md; fi
+          printf '\n%s\n' "$LINEA" >> README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "README: $LINEA"
+          git push origin "HEAD:$DESTINO"
+
+  validate-dev:
+    needs: update-readme
+    runs-on: self-hosted
+    steps:
+      - name: Comparar DEV_TOKEN con LOCAL_DEV_TOKEN
+        shell: powershell
+        env:
+          DEV_TOKEN: ${{ secrets.DEV_TOKEN }}
+        run: |
+          if ($env:DEV_TOKEN -eq $env:LOCAL_DEV_TOKEN) {
+            Write-Host "Todo correcto para integrar en develop"
+          } else {
+            Write-Host "Validacion fallida: DEV_TOKEN no coincide con LOCAL_DEV_TOKEN"
+            exit 1
+          }
